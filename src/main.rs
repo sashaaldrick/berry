@@ -1,6 +1,7 @@
 use clap::{Parser, Subcommand};
 use git2::Repository;
 use indicatif::{ProgressBar, ProgressStyle};
+use std::env;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -36,6 +37,11 @@ enum Commands {
     New {
         /// Name of the folder to create
         name: String,
+    },
+    /// Prepare environment for running end-to-end tests
+    Setup {
+        /// Optional project directory (defaults to current directory)
+        dir: Option<String>,
     },
 }
 
@@ -265,31 +271,58 @@ fn update_cargo_file(path: &Path) -> Result<(), String> {
     file.read_to_string(&mut content)
         .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
 
-    // Check if file is in apps directory
-    let is_apps = path.to_string_lossy().contains("/apps/");
-
     // Update dependencies using regex-like replacements
-    let mut updated = content
-        .replace(
-            "risc0-build-ethereum = { path = \"../../build\" }",
-            "risc0-build-ethereum = { git = \"https://github.com/risc0/risc0-ethereum\", branch = \"release-1.3\" }",
-        )
-        .replace(
-            "risc0-ethereum-contracts = { path = \"../../contracts\" }",
-            "risc0-ethereum-contracts = { git = \"https://github.com/risc0/risc0-ethereum\", branch = \"release-1.3\" }",
-        );
+    let mut updated = content;
 
-    // Different handling for files in apps/ directory
-    if is_apps {
+    // For methods/Cargo.toml, we need to explicitly set risc0-build-ethereum
+    if path.to_string_lossy().contains("methods/Cargo.toml") {
         updated = updated.replace(
-            "risc0-steel = { path = \"../../crates/steel\" }",
-            "risc0-steel = { git = \"https://github.com/risc0/risc0-ethereum\", branch = \"release-1.3\", features = [\"host\"] }",
+            "risc0-build-ethereum = { workspace = true }",
+            "risc0-build-ethereum = { git = \"https://github.com/risc0/risc0-ethereum\", branch = \"release-1.3\" }",
         );
     } else {
-        updated = updated.replace(
-            "risc0-steel = { path = \"../../crates/steel\" }",
-            "risc0-steel = { git = \"https://github.com/risc0/risc0-ethereum\", branch = \"release-1.3\" }",
-        );
+        // For other Cargo.toml files
+        updated = updated
+            .replace(
+                "risc0-build-ethereum = { path = \"../../build\" }",
+                "risc0-build-ethereum = { git = \"https://github.com/risc0/risc0-ethereum\", branch = \"release-1.3\" }",
+            )
+            .replace(
+                "risc0-ethereum-contracts = { path = \"../../contracts\" }",
+                "risc0-ethereum-contracts = { git = \"https://github.com/risc0/risc0-ethereum\", branch = \"release-1.3\" }",
+            )
+            .replace(
+                "risc0-steel = { path = \"../../crates/steel\" }",
+                "risc0-steel = { git = \"https://github.com/risc0/risc0-ethereum\", branch = \"release-1.3\" }",
+            )
+            .replace(
+                "risc0-steel = { path = \"../../../crates/steel\" }",
+                "risc0-steel = { git = \"https://github.com/risc0/risc0-ethereum\", branch = \"release-1.3\" }",
+            )
+            .replace(
+                "risc0-steel = { path = \"../../../../crates/steel\" }",
+                "risc0-steel = { git = \"https://github.com/risc0/risc0-ethereum\", branch = \"release-1.3\" }",
+            )
+            .replace(
+                "risc0-ethereum-contracts = { workspace = true }",
+                "risc0-ethereum-contracts = { git = \"https://github.com/risc0/risc0-ethereum\", branch = \"release-1.3\" }",
+            )
+            .replace(
+                "risc0-steel = { workspace = true }",
+                "risc0-steel = { git = \"https://github.com/risc0/risc0-ethereum\", branch = \"release-1.3\" }",
+            )
+            .replace(
+                "risc0-steel = { workspace = true, features = [\"host\"] }",
+                "risc0-steel = { git = \"https://github.com/risc0/risc0-ethereum\", branch = \"release-1.3\", features = [\"host\"] }",
+            );
+
+        // Add features = ["host"] for apps directory
+        if path.to_string_lossy().contains("/apps/") {
+            updated = updated.replace(
+                "risc0-steel = { git = \"https://github.com/risc0/risc0-ethereum\", branch = \"release-1.3\" }",
+                "risc0-steel = { git = \"https://github.com/risc0/risc0-ethereum\", branch = \"release-1.3\", features = [\"host\"] }",
+            );
+        }
     }
 
     // Write back to file
@@ -497,6 +530,14 @@ fn update_remappings(dir: &str) -> Result<(), String> {
 
 /// Initialize a new project
 fn init_project(name: &str) -> Result<(), String> {
+    // Check if project directory already exists
+    if Path::new(name).exists() {
+        return Err(format!(
+            "A file or directory named '{}' already exists. Please choose a different name or remove the existing one.",
+            name
+        ));
+    }
+
     // Clone the repository
     clone_repository(name, "release-1.3").map_err(|e| e.to_string())?;
 
@@ -524,9 +565,118 @@ fn init_project(name: &str) -> Result<(), String> {
     // Print success message
     println!("\n🫐 Project {} created successfully!", name);
     println!("\nNext steps:");
-    println!("  1. cd {}", name);
-    println!("  2. forge build");
-    println!("  3. cargo test");
+    println!("1. berry setup {}", name);
+    println!("2. Start anvil in a separate terminal");
+    println!("3. Run ./e2e-test.sh");
+
+    Ok(())
+}
+
+/// Set up environment for end-to-end tests
+fn run_setup(dir: Option<&str>) -> Result<(), String> {
+    // If directory is provided, change to it first
+    if let Some(project_dir) = dir {
+        if !Path::new(project_dir).exists() {
+            return Err(format!("Directory '{}' not found", project_dir));
+        }
+        env::set_current_dir(project_dir)
+            .map_err(|e| format!("Failed to change to directory '{}': {}", project_dir, e))?;
+    }
+
+    if !Path::new("e2e-test.sh").exists() {
+        return Err(
+            "e2e-test.sh not found. Please run this command from your project directory or specify the project directory (e.g., berry setup my-project)"
+                .to_string(),
+        );
+    }
+
+    println!("\nPreparing test environment...");
+    println!("This will:");
+    println!("1. Build the project (cargo build && forge build)");
+    println!("2. Make e2e-test.sh executable");
+    println!("3. Set up environment variables\n");
+
+    let pb = ProgressBar::new_spinner();
+    pb.set_style(
+        ProgressStyle::default_spinner()
+            .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ ")
+            .template("{spinner:.green} {msg}")
+            .unwrap(),
+    );
+
+    // Build the project
+    pb.set_message("Building project...");
+    let build_output = Command::new("sh")
+        .arg("-c")
+        .arg("cargo build && forge build")
+        .output()
+        .map_err(|e| format!("Failed to build project: {}", e))?;
+
+    if !build_output.status.success() {
+        return Err(format!(
+            "Build failed: {}",
+            String::from_utf8_lossy(&build_output.stderr)
+        ));
+    }
+
+    // Make test script executable
+    pb.set_message("Making test script executable...");
+    let chmod_output = Command::new("chmod")
+        .arg("+x")
+        .arg("e2e-test.sh")
+        .output()
+        .map_err(|e| format!("Failed to make e2e-test.sh executable: {}", e))?;
+
+    if !chmod_output.status.success() {
+        return Err(format!(
+            "Failed to make e2e-test.sh executable: {}",
+            String::from_utf8_lossy(&chmod_output.stderr)
+        ));
+    }
+
+    // Set up environment variables
+    pb.set_message("Setting up environment variables...");
+    let env_vars = [
+        ("BONSAI_API_URL", "https://api.bonsai.xyz"),
+        (
+            "ETH_WALLET_ADDRESS",
+            "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        ),
+        (
+            "ETH_WALLET_PRIVATE_KEY",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        ),
+        ("ETH_RPC_URL", "http://localhost:8545"),
+    ];
+
+    // Create env.sh file
+    let mut env_content = String::new();
+    for (key, value) in env_vars {
+        env_content.push_str(&format!("export {}={}\n", key, value));
+    }
+    if env::var("BONSAI_API_KEY").is_err() {
+        env_content.push_str("\n# Get your Bonsai API key from https://bonsai.xyz/apply\n");
+        env_content.push_str("# export BONSAI_API_KEY=your_api_key_here\n");
+    }
+
+    let env_file_path = "env.sh";
+    fs::write(env_file_path, env_content).map_err(|e| format!("Failed to create env.sh: {}", e))?;
+
+    // Make env.sh executable
+    Command::new("chmod")
+        .arg("+x")
+        .arg(env_file_path)
+        .output()
+        .map_err(|e| format!("Failed to make env.sh executable: {}", e))?;
+
+    pb.finish_with_message(format!("{} Setup completed successfully", CHECK_MARK));
+
+    let project_name = dir.unwrap_or(".");
+    println!("\nNext steps:");
+    println!("1. cd {}", project_name);
+    println!("2. source env.sh");
+    println!("3. export BONSAI_API_KEY=your_api_key_here  # Get one at https://bonsai.xyz/apply");
+    println!("4. ./e2e-test.sh");
 
     Ok(())
 }
@@ -534,7 +684,7 @@ fn init_project(name: &str) -> Result<(), String> {
 fn main() {
     let cli = Cli::parse();
 
-    match cli.command {
+    match &cli.command {
         Commands::New { name } => {
             let mut all_deps_ok = true;
 
@@ -585,7 +735,7 @@ fn main() {
             }
 
             // Initialize the project
-            match init_project(&name) {
+            match init_project(name) {
                 Ok(_) => (),
                 Err(e) => {
                     eprintln!("{} Error initializing project: {}", CROSS_MARK, e);
@@ -595,6 +745,12 @@ fn main() {
                     }
                     return;
                 }
+            }
+        }
+        Commands::Setup { dir } => {
+            if let Err(e) = run_setup(dir.as_deref()) {
+                eprintln!("{} Error: {}", CROSS_MARK, e);
+                std::process::exit(1);
             }
         }
     }
