@@ -30,22 +30,51 @@ jobs:
           # Configure AWS CLI for R2
           aws configure set aws_access_key_id $R2_ACCESS_KEY_ID
           aws configure set aws_secret_access_key $R2_SECRET_ACCESS_KEY
-          aws configure set default.region auto
+          aws configure set default.region weur
+          aws configure set default.cli_connect_timeout 30
+          aws configure set default.tcp_keepalive on
           
-          # Upload binary
-          aws s3 cp target/release/berry \
-              s3://$R2_BUCKET/berry-${VERSION}-darwin-arm64 \
-              --endpoint-url https://${{ secrets.CLOUDFLARE_ACCOUNT_ID }}.r2.cloudflarestorage.com \
-              --acl public-read
-              
-          # Upload install script
-          aws s3 cp install.sh \
-              s3://$R2_BUCKET/install.sh \
-              --endpoint-url https://${{ secrets.CLOUDFLARE_ACCOUNT_ID }}.r2.cloudflarestorage.com \
-              --acl public-read
-              
-          # Also upload install script as latest
-          aws s3 cp install.sh \
-              s3://$R2_BUCKET/install \
-              --endpoint-url https://${{ secrets.CLOUDFLARE_ACCOUNT_ID }}.r2.cloudflarestorage.com \
-              --acl public-read 
+          # Verify binary exists
+          if [ ! -f "target/release/berry" ]; then
+            echo "Error: Binary not found at target/release/berry"
+            exit 1
+          fi
+          
+          # Function to retry uploads
+          upload_with_retry() {
+            local source=$1
+            local dest=$2
+            local max_attempts=5
+            local attempt=1
+            
+            while [ $attempt -le $max_attempts ]; do
+              echo "Attempt $attempt of $max_attempts: Uploading $source to $dest"
+              if aws s3 cp "$source" "$dest" \
+                  --endpoint-url https://${{ secrets.CLOUDFLARE_ACCOUNT_ID }}.r2.cloudflarestorage.com \
+                  --acl public-read; then
+                echo "Upload successful!"
+                return 0
+              fi
+              echo "Upload failed, retrying in 5 seconds..."
+              sleep 5
+              attempt=$((attempt + 1))
+            done
+            
+            echo "Failed to upload after $max_attempts attempts"
+            return 1
+          }
+          
+          # Upload binary with retries
+          upload_with_retry \
+            "target/release/berry" \
+            "s3://$R2_BUCKET/berry-${VERSION}-darwin-arm64"
+          
+          # Upload install script with retries
+          upload_with_retry \
+            "install.sh" \
+            "s3://$R2_BUCKET/install.sh"
+          
+          # Upload install script as latest with retries
+          upload_with_retry \
+            "install.sh" \
+            "s3://$R2_BUCKET/install" 
