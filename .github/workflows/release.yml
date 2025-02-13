@@ -1,4 +1,4 @@
-name: add some aws debug logs 
+name: berry 0.1.0
 
 on:
   push:
@@ -33,6 +33,8 @@ jobs:
           aws configure set default.region weur
           aws configure set default.cli_connect_timeout 30
           aws configure set default.tcp_keepalive on
+          aws configure set default.s3.addressing_style path
+          aws configure set default.s3.signature_version s3v4
           
           echo "Uploading binary..."
           AWS_DEBUG=true aws s3api put-object \
