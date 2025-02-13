@@ -1,10 +1,22 @@
 #!/usr/bin/env bash
 
-# Minimal installer script for our CLI tool (emulating rustup behavior)
+# Installation script for the berry CLI tool
 
 set -e
 
-# Ensure script is running on macOS
+# Print the berry ASCII art
+cat << "EOF"
+    ____                        
+   / __ )___  ____________  __
+  / __  / _ \/ ___/ ___/ / / /
+ / /_/ /  __/ /  / /  / /_/ / 
+/_____/\___/_/  /_/   \__, /  
+                     /____/    
+EOF
+
+echo "Installing berry CLI..."
+
+# Ensure running on macOS
 if [[ "$(uname)" != "Darwin" ]]; then
   echo "Error: This installer currently only supports macOS."
   exit 1
@@ -16,21 +28,6 @@ if [[ "$ARCH" != "arm64" ]]; then
   echo "Error: This installer is designed for macOS Apple Silicon (arm64)."
   exit 1
 fi
-
-# Define URL for the pre-compiled CLI binary (placeholder URL)
-BINARY_URL="https://example.com/cli-macos-arm64"
-
-# Create a temporary file for downloading the binary
-TMP_BINARY=$(mktemp)
-
-echo "Downloading CLI binary from $BINARY_URL ..."
-if ! curl -fsSL "$BINARY_URL" -o "$TMP_BINARY"; then
-  echo "Error: Failed to download the CLI binary."
-  exit 1
-fi
-
-# Make the downloaded binary executable
-chmod +x "$TMP_BINARY"
 
 # Determine the installation directory
 # Default is /usr/local/bin. If not writable, try /opt/homebrew/bin (common on Apple Silicon), else fallback to $HOME/.local/bin
@@ -44,45 +41,100 @@ if [ ! -w "$INSTALL_DIR" ]; then
   fi
 fi
 
-# Define the CLI binary name (adjust as needed)
-BIN_NAME="mycli"
-INSTALL_PATH="$INSTALL_DIR/$BIN_NAME"
+INSTALL_PATH="$INSTALL_DIR/berry"
+VERSION="0.1.0"  # This should match your Cargo.toml version
 
-echo "Installing CLI binary to $INSTALL_PATH ..."
-if ! mv "$TMP_BINARY" "$INSTALL_PATH"; then
-  echo "Error: Could not move binary to $INSTALL_PATH."
-  exit 1
+# Try downloading pre-compiled binary first
+BINARY_URL="https://berry.sasha.computer/berry-${VERSION}-darwin-arm64"
+echo "Downloading pre-compiled binary from $BINARY_URL..."
+if curl -sL "$BINARY_URL" -o "$INSTALL_PATH.tmp"; then
+  # Verify the binary
+  chmod +x "$INSTALL_PATH.tmp"
+  if "$INSTALL_PATH.tmp" --version > /dev/null 2>&1; then
+    mv "$INSTALL_PATH.tmp" "$INSTALL_PATH"
+    echo "✓ Pre-compiled binary installed successfully"
+  else
+    echo "Downloaded binary verification failed, falling back to building from source..."
+    rm -f "$INSTALL_PATH.tmp"
+    BUILD_FROM_SOURCE=1
+  fi
+else
+  echo "Pre-compiled binary not available, falling back to building from source..."
+  BUILD_FROM_SOURCE=1
 fi
 
-chmod +x "$INSTALL_PATH"
+# Build from source if needed
+if [ "${BUILD_FROM_SOURCE}" = "1" ]; then
+  # Check if cargo is installed
+  if ! command -v cargo &> /dev/null; then
+    echo "Error: Rust's cargo is required but not found."
+    echo "Please install Rust first: https://www.rust-lang.org/tools/install"
+    exit 1
+  fi
 
-# Determine the user's shell and corresponding config file for modifying PATH
-CURRENT_SHELL=$(basename "$SHELL")
-case "$CURRENT_SHELL" in
-  zsh)
+  # Clone the repository to a temporary directory
+  TMP_DIR=$(mktemp -d)
+  echo "Cloning berry repository..."
+  git clone https://github.com/sashaaldrick/berry.git "$TMP_DIR" || {
+    echo "Error: Failed to clone repository"
+    rm -rf "$TMP_DIR"
+    exit 1
+  }
+
+  # Build the binary
+  echo "Building berry..."
+  (cd "$TMP_DIR" && cargo build --release) || {
+    echo "Error: Failed to build berry"
+    rm -rf "$TMP_DIR"
+    exit 1
+  }
+
+  # Install the binary
+  BINARY_PATH="$TMP_DIR/target/release/berry"
+  echo "Installing berry to $INSTALL_PATH..."
+  cp "$BINARY_PATH" "$INSTALL_PATH" || {
+    echo "Error: Failed to install berry"
+    rm -rf "$TMP_DIR"
+    exit 1
+  }
+
+  chmod +x "$INSTALL_PATH"
+
+  # Clean up
+  rm -rf "$TMP_DIR"
+  echo "✓ Built and installed from source successfully"
+fi
+
+# Determine the user's shell and corresponding config file
+SHELL_CONFIG=""
+case "$SHELL" in
+  */zsh)
     SHELL_CONFIG="$HOME/.zshrc"
     ;;
-  bash)
-    SHELL_CONFIG="$HOME/.bash_profile"
+  */bash)
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+      SHELL_CONFIG="$HOME/.bash_profile"
+    else
+      SHELL_CONFIG="$HOME/.bashrc"
+    fi
     ;;
   *)
     SHELL_CONFIG="$HOME/.profile"
     ;;
 esac
 
-echo "Ensuring $INSTALL_DIR is in your PATH in $SHELL_CONFIG ..."
-
-# Check if the PATH update already exists
-if ! grep -q "$INSTALL_DIR" "$SHELL_CONFIG"; then
-  echo "export PATH=\"$INSTALL_DIR:\$PATH\"" >> "$SHELL_CONFIG"
-  echo "Added $INSTALL_DIR to PATH in $SHELL_CONFIG. Please restart your terminal or run 'source $SHELL_CONFIG'."
-else
-  echo "$INSTALL_DIR is already in PATH in $SHELL_CONFIG."
+# Add installation directory to PATH if needed
+if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
+  echo "Adding $INSTALL_DIR to your PATH in $SHELL_CONFIG"
+  echo "export PATH=\"\$PATH:$INSTALL_DIR\"" >> "$SHELL_CONFIG"
+  echo "Please restart your terminal or run: source $SHELL_CONFIG"
 fi
 
-# Placeholder for checking dependencies
-echo "Checking for required dependencies... (this is a placeholder)"
-
-# Future: Add actual dependency checks here
-
-echo "Installation complete. You can now use the '$BIN_NAME' command." 
+echo "✓ berry installed successfully!"
+echo
+echo "To get started, run:"
+echo "  berry new my-project"
+echo "  cd my-project"
+echo "  berry setup"
+echo
+echo "For more information, visit: https://github.com/sashaaldrick/berry" 

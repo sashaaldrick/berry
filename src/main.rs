@@ -23,9 +23,9 @@ const CROSS_MARK: &str = "✗";
 /// A modern CLI tool for project setup and management
 #[derive(Parser)]
 #[command(name = "berry")]
-#[command(author = "Your Name <your.email@example.com>")]
+#[command(author = "Sasha Aldrick <sasha@risczero.com>")]
 #[command(version = "0.1.0")]
-#[command(about = format!("{}\nA modern CLI tool for project setup and management", ASCII_ART))]
+#[command(about = format!("{}\nA CLI destined to make berrifiable compute accessible to all", ASCII_ART))]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -65,7 +65,23 @@ fn check_rust() -> Result<String, String> {
             .next()
             .unwrap_or("")
             .to_string();
-        Ok(format!("Rust v{}", version))
+
+        // Check minimum version requirement
+        if version.split('.').next().unwrap_or("0") == "1" {
+            let minor = version
+                .split('.')
+                .nth(1)
+                .unwrap_or("0")
+                .parse::<u32>()
+                .unwrap_or(0);
+            if minor >= 83 {
+                return Ok(format!("Rust v{}", version));
+            }
+        }
+        Err(format!(
+            "Rust v{} is not supported. Minimum required version is v1.83.0. Visit: https://www.rust-lang.org/tools/install",
+            version
+        ))
     } else {
         Err(
             "Rust not found. To install, visit: https://www.rust-lang.org/tools/install"
@@ -80,7 +96,20 @@ fn check_foundry() -> Result<String, String> {
         let version = version.trim().to_string();
         // Extract just the version number
         let version = version.split_whitespace().nth(1).unwrap_or("").to_string();
-        Ok(format!("Foundry v{}", version))
+
+        // Check minimum version requirement
+        let version_parts: Vec<&str> = version.split('.').collect();
+        if let (Some(major), Some(minor)) = (version_parts.get(0), version_parts.get(1)) {
+            let major = major.parse::<u32>().unwrap_or(0);
+            let minor = minor.parse::<u32>().unwrap_or(0);
+            if major > 0 || (major == 0 && minor >= 3) {
+                return Ok(format!("Foundry v{}", version));
+            }
+        }
+        Err(format!(
+            "Foundry v{} is not supported. Minimum required version is v0.3.0. Visit: https://book.getfoundry.sh/getting-started/installation",
+            version
+        ))
     } else {
         Err("Foundry not found. To install, visit: https://book.getfoundry.sh/getting-started/installation".to_string())
     }
@@ -92,15 +121,25 @@ fn check_risc0() -> Result<String, String> {
         let version = version.trim().to_string();
         // Extract just the version number
         let version = version.split_whitespace().nth(1).unwrap_or("").to_string();
-        // Check if version starts with 1.2
-        if version.contains("1.2") {
-            Ok(format!("RISC0 v{}", version))
-        } else {
-            Err(format!(
-                "Unsupported RISC0 version: {}. Version 1.2.x is required",
-                version
-            ))
+
+        // Check minimum version requirement
+        let version_parts: Vec<&str> = version.split('.').collect();
+        if let (Some(major), Some(minor), Some(patch)) = (
+            version_parts.get(0),
+            version_parts.get(1),
+            version_parts.get(2),
+        ) {
+            let major = major.parse::<u32>().unwrap_or(0);
+            let minor = minor.parse::<u32>().unwrap_or(0);
+            let patch = patch.parse::<u32>().unwrap_or(0);
+            if major > 1 || (major == 1 && (minor > 2 || (minor == 2 && patch >= 3))) {
+                return Ok(format!("RISC0 v{}", version));
+            }
         }
+        Err(format!(
+            "RISC0 v{} is not supported. Minimum required version is v1.2.3. Please run `rzup update` or visit: https://dev.risczero.com/api/zkvm/install",
+            version
+        ))
     } else {
         Err(
             "RISC0 not found. To install, visit: https://dev.risczero.com/api/zkvm/install"
@@ -566,9 +605,11 @@ fn init_project(name: &str) -> Result<(), String> {
     println!("\n🫐 Project {} created successfully!", name);
     println!("\nNext steps:");
     println!("1. berry setup {}", name);
-    println!("2. Start anvil in a separate terminal");
-    println!("3. Run ./e2e-test.sh");
-
+    println!("2. cd {}", name);
+    println!("3. source env.sh");
+    println!("4. export BONSAI_API_KEY=your_api_key_here  # Get one at https://bonsai.xyz/apply");
+    println!("Run `anvil` in another terminal to start a local Ethereum node");
+    println!("5. ./e2e-test.sh");
     Ok(())
 }
 
