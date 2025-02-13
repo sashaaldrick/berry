@@ -51,7 +51,8 @@ jobs:
               echo "Attempt $attempt of $max_attempts: Uploading $source to $dest"
               if aws s3 cp "$source" "$dest" \
                   --endpoint-url https://${{ secrets.CLOUDFLARE_ACCOUNT_ID }}.r2.cloudflarestorage.com \
-                  --acl public-read; then
+                  --acl public-read \
+                  --checksum-algorithm CRC32; then
                 echo "Upload successful!"
                 return 0
               fi
