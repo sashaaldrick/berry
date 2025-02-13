@@ -36,4 +36,16 @@ jobs:
           aws s3 cp target/release/berry \
               s3://$R2_BUCKET/berry-${VERSION}-darwin-arm64 \
               --endpoint-url https://${{ secrets.CLOUDFLARE_ACCOUNT_ID }}.r2.cloudflarestorage.com \
+              --acl public-read
+              
+          # Upload install script
+          aws s3 cp install.sh \
+              s3://$R2_BUCKET/install.sh \
+              --endpoint-url https://${{ secrets.CLOUDFLARE_ACCOUNT_ID }}.r2.cloudflarestorage.com \
+              --acl public-read
+              
+          # Also upload install script as latest
+          aws s3 cp install.sh \
+              s3://$R2_BUCKET/install \
+              --endpoint-url https://${{ secrets.CLOUDFLARE_ACCOUNT_ID }}.r2.cloudflarestorage.com \
               --acl public-read 
