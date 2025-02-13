@@ -1,0 +1,57 @@
+name: add some aws debug logs 
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-and-release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Build binary
+        run: cargo build --release
+
+      - name: Upload to R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: berry-sasha-computer
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          VERSION: ${{ github.ref_name }}
+          AWS_DEBUG: true
+          AWS_TRACE: true
+        run: |
+          VERSION=${VERSION#v}
+          
+          brew install awscli
+          
+          aws configure set aws_access_key_id $AWS_ACCESS_KEY_ID
+          aws configure set aws_secret_access_key $AWS_SECRET_ACCESS_KEY
+          aws configure set default.region weur
+          aws configure set default.cli_connect_timeout 30
+          aws configure set default.tcp_keepalive on
+          
+          echo "Uploading binary..."
+          AWS_DEBUG=true aws s3api put-object \
+            --debug \
+            --endpoint-url https://$CLOUDFLARE_ACCOUNT_ID.r2.cloudflarestorage.com \
+            --bucket $R2_BUCKET \
+            --key "berry-${VERSION}-darwin-arm64" \
+            --body "target/release/berry" \
+            --acl public-read \
+            --content-type "$(file -b --mime-type target/release/berry)" \
+            --checksum-algorithm CRC32
+
+          echo "Uploading install script..."
+          AWS_DEBUG=true aws s3api put-object \
+            --debug \
+            --endpoint-url https://$CLOUDFLARE_ACCOUNT_ID.r2.cloudflarestorage.com \
+            --bucket $R2_BUCKET \
+            --key "install.sh" \
+            --body "install.sh" \
+            --acl public-read \
+            --content-type "application/octet-stream" \
+            --checksum-algorithm CRC32
